@@ -22,3 +22,5 @@ void report_process(pid_t pid, const char *exe, char **argv, char **envp);
    a file or a directory.
 */
 void report_error(const char *path, int errno_code);
+
+int read_all(int fd, char **out_buf, size_t *out_len);

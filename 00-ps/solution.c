@@ -59,9 +59,9 @@ char** parse_nul_separated_strings(char* buf, size_t len)
     return argv;
 }
 
-char** read_and_parse(const char* filename, const int dir_fd, char* buf, int* err) {
+char** read_and_parse(const char* filename, const int dir_fd, char** buf, int* err) {
 	int fd;
-	ssize_t readed;
+	size_t readed;
 	char** arr;
 
 	fd = openat(dir_fd, filename, O_RDONLY);
@@ -70,22 +70,14 @@ char** read_and_parse(const char* filename, const int dir_fd, char* buf, int* er
 		return NULL;
 	}
 
-	readed = read(fd, buf, MS);
-
-	if (readed == -1) {
-		*err = errno;
-		close(fd);
-		return NULL;
-	}
-
-	if (readed == MS) {
-		errno = ENOMEM;
+	int is_err = read_all(fd, buf, &readed);
+	if (is_err == -1) {
 		*err = errno;
 		close(fd);
 		return NULL;
 	}
 	
-	arr = parse_nul_separated_strings(buf, (size_t)(readed));
+	arr = parse_nul_separated_strings(*buf, readed);
 	if (arr == NULL) {
 		errno = ENOMEM;
 		*err = errno;
@@ -94,6 +86,55 @@ char** read_and_parse(const char* filename, const int dir_fd, char* buf, int* er
 	}
 	close(fd);
 	return arr;
+}
+
+int read_all(int fd, char **out_buf, size_t *out_len)
+{
+    size_t cap = 4096;
+    size_t len = 0;
+    char *buf = malloc(cap);
+
+    if (buf == NULL) {
+        return -1;
+    }
+
+    for (;;) {
+        if (len == cap) {
+            if (cap > SIZE_MAX / 2) {
+                free(buf);
+                errno = EOVERFLOW;
+                return -1;
+            }
+
+            size_t new_cap = cap * 2;
+            char *tmp = realloc(buf, new_cap);
+
+            if (tmp == NULL) {
+                free(buf);
+                return -1;
+            }
+
+            buf = tmp;
+            cap = new_cap;
+        }
+
+        ssize_t n = read(fd, buf + len, cap - len);
+
+        if (n > 0) {
+            len += (size_t)n;
+        } else if (n == 0) {
+            break;
+        } else {
+            int saved_errno = errno;
+            free(buf);
+            errno = saved_errno;
+            return -1;
+        }
+    }
+
+    *out_buf = buf;
+    *out_len = len;
+    return 0;
 }
 
 void ps(void)
@@ -174,21 +215,29 @@ void ps(void)
 			
 			buf_exe[readed] = '\0';
 
-			char buf_envs[MS], buf_cmd[MS];
-			char** envs_arr = read_and_parse("./environ", pid_fd, buf_envs, &err);
+			char* buf_envs = NULL;
+			char* buf_cmd = NULL;
+			char** envs_arr = NULL;
+			char** cmd_arr = NULL;
+			envs_arr = read_and_parse("./environ", pid_fd, &buf_envs, &err);
 			if (err != 0) {
 				snprintf(path, sizeof(path), "/proc/%s/environ", entry->d_name);
 				report_error(path, err);
 				free(envs_arr);
+				free(cmd_arr);
+				free(buf_envs);
+				free(buf_cmd);
 				close(pid_fd);
 				continue;
 			}
-			char** cmd_arr = read_and_parse("./cmdline", pid_fd, buf_cmd, &err);
+			cmd_arr = read_and_parse("./cmdline", pid_fd, &buf_cmd, &err);
 			if (err != 0) {
 				snprintf(path, sizeof(path), "/proc/%s/cmdline", entry->d_name);
 				report_error(path, err);
 				free(cmd_arr);
 				free(envs_arr);
+				free(buf_envs);
+				free(buf_cmd);
 				close(pid_fd);
 				continue;
 			}
@@ -197,6 +246,8 @@ void ps(void)
 
 			free(envs_arr);
 			free(cmd_arr);
+			free(buf_envs);
+			free(buf_cmd);
 			close(pid_fd);
 		}
 	}
