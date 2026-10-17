@@ -1,11 +1,14 @@
 #include <ctype.h>
+#include <dirent.h>
+#include <errno.h>
 #include <stdlib.h>
 #include <fcntl.h>
 #include <stdio.h>
 #include <stdint.h>
 #include <sys/types.h>
-#include <dirent.h>
+
 #include <string.h>
+
 
 #include <solution.h>
 
@@ -26,7 +29,7 @@ int is_numeric(const char *s)
     return 1;
 }
 
-char** parse_nul_separated_strings(char* buf, size_t len, ssize_t* count)
+char** parse_nul_separated_strings(char* buf, size_t len)
 {
     size_t argc = 0;
 
@@ -53,29 +56,65 @@ char** parse_nul_separated_strings(char* buf, size_t len, ssize_t* count)
     }
 
     argv[argc] = NULL;
-    *count = argc;
     return argv;
+}
+
+char** read_and_parse(const char* filename, const int dir_fd, char* buf, int* err) {
+	int fd;
+	ssize_t readed;
+
+	fd = openat(dir_fd, filename, O_RDONLY);
+	if (fd == -1) {
+		*err = errno;
+		return NULL;
+	}
+
+	readed = read(fd, buf, MS);
+	if (readed == -1) {
+		*err = errno;
+		return NULL;
+	}
+
+	if (readed == MS) {
+		*err = errno;
+		return NULL;
+	}
+
+	if (readed == 0) {
+		*err = errno;
+		return NULL;
+	}
+
+	return parse_nul_separated_strings(buf, (size_t)(readed));
 }
 
 void ps(void)
 {
 	int proc_fd = open("/proc", O_RDONLY | O_DIRECTORY);
+	char path[PATH_MAX];
+	int err;
 
 	if (proc_fd == -1) {
-    	perror("open /proc");
+		err = errno;
+		snprintf(path, sizeof(path), "/proc");
+    	report_error(path, err);
 		exit(EXIT_FAILURE);
 	}
 
 	int iter_fd = dup(proc_fd);
 	if (iter_fd == -1) {
-		perror("dup");
+		err = errno;
+		snprintf(path, sizeof(path), "/proc");
+    	report_error(path, err);
 		close(proc_fd);
 		exit(EXIT_FAILURE);
 	}
 
 	DIR *dir = fdopendir(iter_fd);
 	if (dir == NULL) {
-		perror("fdopendir");
+		err = errno;
+		snprintf(path, sizeof(path), "/proc");
+    	report_error(path, err);
 		close(iter_fd);
 		close(proc_fd);
 		exit(EXIT_FAILURE);
@@ -89,75 +128,46 @@ void ps(void)
 		if (is_numeric(entry->d_name)) {
 			int pid_fd = openat(proc_fd, entry->d_name, O_RDONLY | O_DIRECTORY);
 			if (pid_fd == -1) {
-				perror("pid_fd");
+				err = errno;
+				snprintf(path, sizeof(path), "/proc/%s", entry->d_name);
+				report_error(path, err);
 				continue;
 			}
-			char buf[MS];
-			ssize_t written;
-			written = readlinkat(pid_fd, "./exe", buf, MS);
-			if (written >= MS - 1) {
-				perror("buf overload");
+			char buf_exe[MS];
+			ssize_t readed;
+			readed = readlinkat(pid_fd, "./exe", buf_exe, MS);
+			if (readed >= MS - 1) {
+				err = errno;
+				snprintf(path, sizeof(path), "/proc/%s/exe", entry->d_name);
+				report_error(path, err);
 				close(proc_fd);
 				close(iter_fd);
 				close(pid_fd);
 				exit(EXIT_FAILURE);
 			}
-			buf[written] = '\0';
+			if (readed == -1) buf_exe[0] = '\0';
+			else buf_exe[readed] = '\0';
 
-			char envs_buf[MS];
-			int envs_fd;
-			envs_fd = openat(pid_fd, "./environ", O_RDONLY);
-			if (envs_fd == -1) {
-				perror("environ_fd");
+			char buf_envs[MS], buf_cmd[MS];
+			int err = 0;
+			char** envs_arr = read_and_parse("./environ", pid_fd, buf_envs, &err);
+			if (err != 0) {
+				snprintf(path, sizeof(path), "/proc/%s/environ", entry->d_name);
+				report_error(path, err);
+				continue;
+			}
+			char** cmd_arr = read_and_parse("./cmdline", pid_fd, buf_cmd, &err);
+				if (err != 0) {
+				snprintf(path, sizeof(path), "/proc/%s/cmdline", entry->d_name);
+				report_error(path, err);
 				continue;
 			}
 
-			ssize_t readed_env;
-			ssize_t envs_out;
-			char** envs_arr;
-			readed_env = read(envs_fd, envs_buf, MS);
-			if (readed_env == -1) {
-				perror("read env error");
-				continue;
-			}
-			if (readed_env == MS) {
-				perror("bufer overload ");
-				continue;
-			}
-
-			if (readed_env == 0) {
-				perror("empty env");
-				continue;
-			}
-
-			envs_arr = parse_nul_separated_strings(envs_buf, (size_t)(readed_env), &envs_out);
-
-			
-			char cmd_buf[MS];
-			int cmdline_fd;
-			cmdline_fd = openat(pid_fd, "./cmdline", O_RDONLY);
-			if (cmdline_fd == -1) {
-				perror("cmdline_fd");
-				cmd_arr = NULL;
-			}
-			ssize_t readed_cmd;
-			ssize_t argc_out;
-			char** cmd_arr;
-			readed_cmd = read(cmdline_fd, cmd_buf, MS);
-			
-			cmd_arr = parse_nul_separated_strings(cmd_buf, readed_cmd, &argc_out);
-			if (cmd_arr == NULL) {
-				perror("cmd_arr");
-				continue;
-			}
-
-			report_process((pid_t)(atoi(entry->d_name)), buf, cmd_arr, envs_arr);
+			report_process((pid_t)(atoi(entry->d_name)), buf_exe, cmd_arr, envs_arr);
 
 			free(envs_arr);
 			free(cmd_arr);
 
 		}
 	}
-
-
 }
