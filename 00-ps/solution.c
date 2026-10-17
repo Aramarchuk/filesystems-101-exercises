@@ -62,6 +62,7 @@ char** parse_nul_separated_strings(char* buf, size_t len)
 char** read_and_parse(const char* filename, const int dir_fd, char* buf, int* err) {
 	int fd;
 	ssize_t readed;
+	char** arr;
 
 	fd = openat(dir_fd, filename, O_RDONLY);
 	if (fd == -1) {
@@ -70,29 +71,36 @@ char** read_and_parse(const char* filename, const int dir_fd, char* buf, int* er
 	}
 
 	readed = read(fd, buf, MS);
+
 	if (readed == -1) {
 		*err = errno;
+		close(fd);
 		return NULL;
 	}
 
 	if (readed == MS) {
+		errno = ENOMEM;
 		*err = errno;
+		close(fd);
 		return NULL;
 	}
-
-	if (readed == 0) {
+	
+	arr = parse_nul_separated_strings(buf, (size_t)(readed));
+	if (arr == NULL) {
+		errno = ENOMEM;
 		*err = errno;
+		close(fd);
 		return NULL;
 	}
-
-	return parse_nul_separated_strings(buf, (size_t)(readed));
+	close(fd);
+	return arr;
 }
 
 void ps(void)
 {
 	int proc_fd = open("/proc", O_RDONLY | O_DIRECTORY);
 	char path[PATH_MAX];
-	int err;
+	int err = 0;
 
 	if (proc_fd == -1) {
 		err = errno;
@@ -121,10 +129,20 @@ void ps(void)
 	}
 
 	struct dirent *entry;
+	for (;;) {
+		errno = 0;
+		err = 0;
+		entry = readdir(dir);
 
-	while ((entry = readdir(dir)) != NULL) {
+		if (entry == NULL) {
+			if (errno != 0) {
+				snprintf(path, sizeof(path), "/proc");
+				report_error(path, errno);
+			}
+			break;
+		}
+
 		if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) continue;
-		
 		if (is_numeric(entry->d_name)) {
 			int pid_fd = openat(proc_fd, entry->d_name, O_RDONLY | O_DIRECTORY);
 			if (pid_fd == -1) {
@@ -137,29 +155,41 @@ void ps(void)
 			ssize_t readed;
 			readed = readlinkat(pid_fd, "./exe", buf_exe, MS);
 			if (readed >= MS - 1) {
-				err = errno;
-				snprintf(path, sizeof(path), "/proc/%s/exe", entry->d_name);
-				report_error(path, err);
+				// err = errno;
+				// snprintf(path, sizeof(path), "/proc/%s/exe", entry->d_name);
+				// report_error(path, err);
 				close(proc_fd);
 				close(iter_fd);
 				close(pid_fd);
 				exit(EXIT_FAILURE);
 			}
-			if (readed == -1) buf_exe[0] = '\0';
-			else buf_exe[readed] = '\0';
+			if (readed == -1) {
+				err = errno;
+				snprintf(path, sizeof(path), "/proc/%s/exe", entry->d_name);
+				report_error(path, err);
+				close(pid_fd);
+				continue;
+
+			}
+			
+			buf_exe[readed] = '\0';
 
 			char buf_envs[MS], buf_cmd[MS];
-			int err = 0;
 			char** envs_arr = read_and_parse("./environ", pid_fd, buf_envs, &err);
 			if (err != 0) {
 				snprintf(path, sizeof(path), "/proc/%s/environ", entry->d_name);
 				report_error(path, err);
+				free(envs_arr);
+				close(pid_fd);
 				continue;
 			}
 			char** cmd_arr = read_and_parse("./cmdline", pid_fd, buf_cmd, &err);
-				if (err != 0) {
+			if (err != 0) {
 				snprintf(path, sizeof(path), "/proc/%s/cmdline", entry->d_name);
 				report_error(path, err);
+				free(cmd_arr);
+				free(envs_arr);
+				close(pid_fd);
 				continue;
 			}
 
@@ -167,7 +197,9 @@ void ps(void)
 
 			free(envs_arr);
 			free(cmd_arr);
-
+			close(pid_fd);
 		}
 	}
+	close(iter_fd);
+	closedir(dir);
 }
