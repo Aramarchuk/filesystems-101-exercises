@@ -6,9 +6,7 @@
 #include <stdio.h>
 #include <stdint.h>
 #include <sys/types.h>
-
 #include <string.h>
-
 
 #include <solution.h>
 
@@ -195,15 +193,13 @@ void ps(void)
 			char buf_exe[MS];
 			ssize_t readed;
 			readed = readlinkat(pid_fd, "./exe", buf_exe, MS);
-			if (readed >= MS - 1) {
-				// err = errno;
-				// snprintf(path, sizeof(path), "/proc/%s/exe", entry->d_name);
-				// report_error(path, err);
-				close(proc_fd);
-				close(iter_fd);
+			if (readed == (ssize_t)sizeof(buf_exe)) {
+				err = ENAMETOOLONG;
+				snprintf(path, sizeof(path), "/proc/%s/exe", entry->d_name);
+				report_error(path, err);
 				close(pid_fd);
-				exit(EXIT_FAILURE);
-			}
+				continue;
+}
 			if (readed == -1) {
 				err = errno;
 				snprintf(path, sizeof(path), "/proc/%s/exe", entry->d_name);
@@ -251,6 +247,6 @@ void ps(void)
 			close(pid_fd);
 		}
 	}
-	close(iter_fd);
+	close(proc_fd);
 	closedir(dir);
 }
