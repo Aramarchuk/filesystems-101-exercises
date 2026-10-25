@@ -55,8 +55,9 @@ static int myread(const char *path, char *buf, size_t size, off_t offset,
 	if(strcmp(path, "/hello") != 0)
 		return -ENOENT;
 
+	pid_t pid = fuse_get_context()->uid;
 	char contents[64];
-	snprintf(contents, sizeof(contents), "hello, %d\n", getpid());
+	snprintf(contents, sizeof(contents), "hello, %d\n", pid);
 	len = strlen(contents);
 	if ((size_t)offset < len) {
 		if (offset + size > len)
