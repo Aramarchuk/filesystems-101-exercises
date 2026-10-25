@@ -7,7 +7,7 @@ SRC_STDLIB := $(wildcard ../stdlib/*.c)
 HDR_STDLIB := $(wildcard ../stdlib/*.h)
 
 test: build
-	./a.out
+	./a.out ~/mount-point
 
 build: a.out
 
