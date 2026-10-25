@@ -20,11 +20,11 @@ int mygetattr(const char *path, struct stat *stbuf, struct fuse_file_info *fi) {
 	(void)fi;
 	memset(stbuf, 0, sizeof(struct stat));
 	if (strcmp(path, "/hello") == 0) {
-		stbuf->st_mode = S_IFREG | S_IRUSR | S_IRGRP | S_IROTH;
+		stbuf->st_mode = S_IFREG | 0444;
 		stbuf->st_nlink = 1;
 		stbuf->st_size = 64;
 	} else if (strcmp(path, "/") == 0) {
-		stbuf->st_mode = S_IFDIR | S_IXUSR | S_IXGRP | S_IXOTH | S_IREAD | S_IRGRP | S_IROTH;
+		stbuf->st_mode = S_IFDIR | 0755;
 		stbuf->st_nlink = 2;
 	} else {
 		return -ENOENT;
