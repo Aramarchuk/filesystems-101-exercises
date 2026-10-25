@@ -12,6 +12,9 @@ static int myopen(const char *filename, struct fuse_file_info *fi) {
 	if (strcmp(filename, "/hello") != 0) {
 		return -ENOENT;
 	}
+
+	if ((fi->flags & O_ACCMODE) != O_RDONLY)
+		return -EROFS;
 	return 0;
 }
 
