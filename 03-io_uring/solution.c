@@ -76,6 +76,7 @@ static int queue_read(struct io_uring *ringp, off_t buf_size, off_t offset, int 
 
 	sqe = io_uring_get_sqe(ringp);
 	if (!sqe) {
+		free(data->buf_base);
 		free(data);
 		return 1;
 	}
@@ -96,6 +97,7 @@ static void queue_write(struct io_uring *ringp, struct io_data *data, int out)
 	data->op = OP_WRITE;
 	data->len = data->len_base;
 	data->buf = data->buf_base;
+	data->offset -= data->len_base - data->len;
 	queue_prepped(ringp, data, out);
 	io_uring_submit(ringp);
 }
@@ -109,7 +111,11 @@ static int copy_file(struct io_uring *ringp, size_t insize, int in, int out) {
 	struct io_uring_cqe *cqe;
 	struct io_data *data;
 
-	while (read_offset < insize) {
+	while (
+		read_offset < insize ||
+		reads_in_progress ||
+		writes_in_progress
+	) {
 		had_reads = reads_in_progress;
 		while (read_offset < insize) {
 			
@@ -137,7 +143,7 @@ static int copy_file(struct io_uring *ringp, size_t insize, int in, int out) {
 		}
 
 		got_completed = 0;
-		while (reads_in_progress + writes_in_progress == QD) {
+		while (reads_in_progress || writes_in_progress) {
 			if (!got_completed) {
 				ret = io_uring_wait_cqe(ringp, &cqe);
 				got_completed = 1;
@@ -192,23 +198,6 @@ static int copy_file(struct io_uring *ringp, size_t insize, int in, int out) {
 			io_uring_cqe_seen(ringp, cqe);
 		}
 	}
-
-	while (writes_in_progress || reads_in_progress) {
-		ret = io_uring_wait_cqe(ringp, &cqe);
-		if (ret) {
-			fprintf(stderr, "wait_cqe=%d\n", ret);
-			return 1;
-		}
-		if (cqe->res < 0) {
-			fprintf(stderr, "write res=%d\n", cqe->res);
-			return 1;
-		}
-		data = io_uring_cqe_get_data(cqe);
-		free(data->buf_base);
-		free(data);
-		writes_in_progress--;
-		io_uring_cqe_seen(ringp, cqe);
-}
 
 	return 0;
 }
