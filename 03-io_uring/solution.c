@@ -172,10 +172,13 @@ static int copy_file(struct io_uring *ringp, size_t insize, int in, int out) {
 			pending++;
 		}
 		if (had_reads_pending != pending) {
-			ret = io_uring_submit(ringp);
+			do {
+				ret = io_uring_submit(ringp);
+			} while (ret == -EINTR);
 			if (ret < 0) {
 				fprintf(stderr, "io_uring_submit: %s\n", strerror(-ret));
-				break;
+				cleanup(ringp, datap, buffers);
+				return 1;
 			}
 		}
 		ret = io_uring_wait_cqe(ringp, &cqe);
