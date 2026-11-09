@@ -323,20 +323,20 @@ void abspath(const char *path)
     if (!ctx.resolved_path || !ctx.pending_path) {
         free(ctx.resolved_path);
         free(ctx.pending_path);
-        exit(EXIT_FAILURE);
+        return;
     }
 
     if (resolve_path(&ctx) != 0) {
         free(ctx.resolved_path);
         free(ctx.pending_path);
-        exit(EXIT_FAILURE);
+        return;
     }
 
     struct stat st;
     if (stat(ctx.resolved_path, &st) == -1) {
         free(ctx.resolved_path);
         free(ctx.pending_path);
-        exit(EXIT_FAILURE);
+        return;
     }
 
     if (S_ISDIR(st.st_mode)) {
@@ -347,7 +347,7 @@ void abspath(const char *path)
             if (!tmp) {
                 free(ctx.resolved_path);
                 free(ctx.pending_path);
-                exit(EXIT_FAILURE);
+                return;
             }
 
             ctx.resolved_path = tmp;
