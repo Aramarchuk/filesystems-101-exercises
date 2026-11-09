@@ -1,3 +1,5 @@
+#include "io_uring.h"
+#include <asm-generic/errno-base.h>
 #include <assert.h>
 #include <solution.h>
 #include <liburing.h>
@@ -101,26 +103,56 @@ static void queue_write(struct io_uring *ringp, struct io_data *data, int out)
 	queue_prepped(ringp, data, out);
 }
 
+static int process_cqe(struct io_uring *ringp, struct io_uring_cqe *cqe, int in, int out, unsigned *in_progress) {
+	struct io_data *data;
+	int fd;
+
+	data = io_uring_cqe_get_data(cqe);
+	if (data->op == OP_READ) fd = in; else fd = out;
+	if (cqe->res < 0) {
+		if (cqe->res == -EAGAIN) {
+			queue_prepped(ringp, data, fd);
+		} else {
+			fprintf(stderr, "cqe failed: %s\n",
+					strerror(-cqe->res));
+			return 1;
+		}
+	} else if ((size_t)cqe->res != data->len) {
+		/* Short read/write, adjust and requeue */
+		data->buf += cqe->res;
+		data->len -= cqe->res;
+		data->offset += cqe->res;
+		queue_prepped(ringp, data, fd);
+	} else if (data->op == OP_READ) {
+		queue_write(ringp, data, out);
+	} else {
+		free(data->buf_base);
+		free(data);
+		(*in_progress)--;
+	}
+	io_uring_cqe_seen(ringp, cqe);
+	return 0;
+}
+
 static int copy_file(struct io_uring *ringp, size_t insize, int in, int out) {
-	unsigned reads_in_progress = 0, writes_in_progress = 0;
+	unsigned in_progress = 0;
 	unsigned num_blocks = insize / BS;
 	unsigned read_offset = 0;
-	unsigned had_reads = 0, got_completed = 0;
-	int ret, fd;
+	unsigned had_reads_in_progress = 0;
+	int ret;
 	struct io_uring_cqe *cqe;
 	struct io_data *data;
 
 	while (
 		read_offset < insize ||
-		reads_in_progress ||
-		writes_in_progress
+		in_progress
 	) {
-		had_reads = reads_in_progress;
+		had_reads_in_progress = in_progress;
 		while (read_offset < insize) {
 			
 			off_t this_size = BS;
 
-			if (reads_in_progress + writes_in_progress >= QD)
+			if (in_progress >= QD)
 				break;
 			if (read_offset == num_blocks * BS)
 				this_size = insize % BS;
@@ -131,72 +163,44 @@ static int copy_file(struct io_uring *ringp, size_t insize, int in, int out) {
 				break;
 
 			read_offset += this_size;
-			reads_in_progress++;
+			in_progress++;
 		}
-		if (had_reads != reads_in_progress) {
+		if (had_reads_in_progress != in_progress) {
 			ret = io_uring_submit(ringp);
 			if (ret < 0) {
 				fprintf(stderr, "io_uring_submit: %s\n", strerror(-ret));
 				break;
 			}
 		}
+		ret = io_uring_wait_cqe(ringp, &cqe);
+		if (ret < 0) {
+			fprintf(stderr, "io_uring_wait_cqe: %s\n", strerror(-ret));
+			return 1;
+		}
 
-		got_completed = 0;
-		while (reads_in_progress || writes_in_progress) {
-			if (!got_completed) {
-				ret = io_uring_wait_cqe(ringp, &cqe);
-				got_completed = 1;
-			} else {
-				ret = io_uring_peek_cqe(ringp, &cqe);
-				if (ret == -EAGAIN) {
-					cqe = NULL;
-					ret = 0;
-				}
-			}
+		while (1) {
+			ret = process_cqe(ringp, cqe, in, out, &in_progress);
+			if (ret)
+				return 1;
+
+			ret = io_uring_peek_cqe(ringp, &cqe);
+
+			if (ret == -EAGAIN)
+				break;
+
 			if (ret < 0) {
-				fprintf(stderr, "io_uring_peek_cqe: %s\n",
-							strerror(-ret));
+				fprintf(stderr, "io_uring_peek_cqe: %s\n", strerror(-ret));
 				return 1;
 			}
-			if (!cqe)
-    			break;
-
-			data = io_uring_cqe_get_data(cqe);
-
-
-			if (data->op == OP_READ) fd = in; else fd = out;
-			if (cqe->res < 0) {
-				if (cqe->res == -EAGAIN) {
-					queue_prepped(ringp, data, fd);
-				} else {
-					fprintf(stderr, "cqe failed: %s\n",
-							strerror(-cqe->res));
-					return 1;
-				}
-			} else if ((size_t)cqe->res != data->len) {
-				/* Short read/write, adjust and requeue */
-				data->buf += cqe->res;
-				data->len -= cqe->res;
-				data->offset += cqe->res;
-				queue_prepped(ringp, data, fd);
-			} else if (data->op == OP_READ) {
-				queue_write(ringp, data, out);
-				reads_in_progress--;
-				writes_in_progress++;
-			} else {
-				free(data->buf_base);
-				free(data);
-				writes_in_progress--;
-			}
-			io_uring_cqe_seen(ringp, cqe);
-			do {
-    			ret = io_uring_submit(ringp);
-			} while (ret == -EINTR || ret == -EAGAIN);
 		}
+
+		do {
+			ret = io_uring_submit(ringp);
+		} while (ret == -EINTR);
 	}
 	
 	// Cleanup in case of submit error
-	while (reads_in_progress || writes_in_progress) {
+	while (in_progress) {
 		ret = io_uring_wait_cqe(ringp, &cqe);
 		if (ret) {
 			fprintf(stderr, "wait_cqe=%d\n", ret);
@@ -207,10 +211,10 @@ static int copy_file(struct io_uring *ringp, size_t insize, int in, int out) {
 			return 1;
 		}
 		data = io_uring_cqe_get_data(cqe);
-		if (data->op == OP_READ) reads_in_progress--; else writes_in_progress--;
 		free(data->buf_base);
 		free(data);
 		io_uring_cqe_seen(ringp, cqe);
+		in_progress--;
 	}
 
 	return 0;
