@@ -99,7 +99,6 @@ static void queue_write(struct io_uring *ringp, struct io_data *data, int out)
 	data->buf = data->buf_base;
 	data->offset -= data->len_base - data->len;
 	queue_prepped(ringp, data, out);
-	io_uring_submit(ringp);
 }
 
 static int copy_file(struct io_uring *ringp, size_t insize, int in, int out) {
@@ -169,24 +168,18 @@ static int copy_file(struct io_uring *ringp, size_t insize, int in, int out) {
 			if (cqe->res < 0) {
 				if (cqe->res == -EAGAIN) {
 					queue_prepped(ringp, data, fd);
-					io_uring_submit(ringp);
-					io_uring_cqe_seen(ringp, cqe);
-					continue;
+				} else {
+					fprintf(stderr, "cqe failed: %s\n",
+							strerror(-cqe->res));
+					return 1;
 				}
-				fprintf(stderr, "cqe failed: %s\n",
-						strerror(-cqe->res));
-				return 1;
 			} else if ((size_t)cqe->res != data->len) {
 				/* Short read/write, adjust and requeue */
 				data->buf += cqe->res;
 				data->len -= cqe->res;
 				data->offset += cqe->res;
 				queue_prepped(ringp, data, fd);
-				io_uring_submit(ringp);
-				io_uring_cqe_seen(ringp, cqe);
-				continue;
-			}
-			if (data->op == OP_READ) {
+			} else if (data->op == OP_READ) {
 				queue_write(ringp, data, out);
 				reads_in_progress--;
 				writes_in_progress++;
@@ -196,7 +189,28 @@ static int copy_file(struct io_uring *ringp, size_t insize, int in, int out) {
 				writes_in_progress--;
 			}
 			io_uring_cqe_seen(ringp, cqe);
+			do {
+    			ret = io_uring_submit(ringp);
+			} while (ret == -EINTR || ret == -EAGAIN);
 		}
+	}
+	
+	// Cleanup in case of submit error
+	while (reads_in_progress || writes_in_progress) {
+		ret = io_uring_wait_cqe(ringp, &cqe);
+		if (ret) {
+			fprintf(stderr, "wait_cqe=%d\n", ret);
+			return 1;
+		}
+		if (cqe->res < 0) {
+			fprintf(stderr, "res=%d\n", cqe->res);
+			return 1;
+		}
+		data = io_uring_cqe_get_data(cqe);
+		if (data->op == OP_READ) reads_in_progress--; else writes_in_progress--;
+		free(data->buf_base);
+		free(data);
+		io_uring_cqe_seen(ringp, cqe);
 	}
 
 	return 0;
@@ -210,8 +224,6 @@ int copy(int in, int out)
 
 	if (setup_context(QD, &ring))
         return 1;
-
-		
 
     if (get_file_size(in, &insize))
         return 1;
