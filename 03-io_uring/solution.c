@@ -76,8 +76,8 @@ static int queue_read(struct io_uring *ringp, off_t buf_size, off_t offset, int 
 
 	sqe = io_uring_get_sqe(ringp);
 	if (!sqe) {
-		free(data->buf_base);
 		free(data);
+		free(buf);
 		return 1;
 	}
 
