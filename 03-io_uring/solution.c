@@ -25,7 +25,7 @@ struct io_data {
 	size_t len_base;
 	char *buf;
 	char *buf_base;
-	off_t is_busy;
+	bool is_busy;
 };
 
 static int get_file_size(int fd, off_t *size)
@@ -46,8 +46,8 @@ static int setup_context(unsigned entries, struct io_uring *ring)
 
 	ret = io_uring_queue_init(entries, ring, 0);
 	if (ret < 0) {
-		fprintf(stderr, "queue_init: %s\n", strerror(-ret));
-		return -1;
+		// fprintf(stderr, "queue_init: %s\n", strerror(-ret));
+		return ret;
 	}
 
 	return 0;
@@ -74,7 +74,7 @@ static int queue_read(struct io_uring *ringp, off_t buf_size, struct io_data *da
 
 	sqe = io_uring_get_sqe(ringp);
 	if (!sqe) {
-		return 1;
+		return -1;
 	}
 
 	data->op = OP_READ;
@@ -107,9 +107,8 @@ static int process_cqe(struct io_uring *ringp, struct io_uring_cqe *cqe, int in,
 		if (cqe->res == -EAGAIN) {
 			queue_prepped(ringp, data, fd);
 		} else {
-			fprintf(stderr, "cqe failed: %s\n",
-					strerror(-cqe->res));
-			return 1;
+			// fprintf(stderr, "cqe failed: %s\n", strerror(-cqe->res));
+			return cqe->res;
 		}
 	} else if ((size_t)cqe->res != data->len) {
 		/* Short read/write, adjust and requeue */
@@ -164,10 +163,10 @@ static int copy_file(struct io_uring *ringp, size_t insize, int in, int out) {
 				break;
 			int i = 0;
 			while (datap[i].is_busy) i++;
-			datap[i].is_busy = 1;
+			
 			if (queue_read(ringp, this_size, &datap[i], read_offset,  in))
 				break;
-
+			datap[i].is_busy = 1;
 			read_offset += this_size;
 			pending++;
 		}
@@ -176,23 +175,23 @@ static int copy_file(struct io_uring *ringp, size_t insize, int in, int out) {
 				ret = io_uring_submit(ringp);
 			} while (ret == -EINTR);
 			if (ret < 0) {
-				fprintf(stderr, "io_uring_submit: %s\n", strerror(-ret));
+				// fprintf(stderr, "io_uring_submit: %s\n", strerror(-ret));
 				cleanup(ringp, datap, buffers);
-				return 1;
+				return ret;
 			}
 		}
 		ret = io_uring_wait_cqe(ringp, &cqe);
 		if (ret < 0) {
-			fprintf(stderr, "io_uring_wait_cqe: %s\n", strerror(-ret));
+			// fprintf(stderr, "io_uring_wait_cqe: %s\n", strerror(-ret));
 			cleanup(ringp, datap, buffers);
-			return 1;
+			return ret;
 		}
 
 		while (1) {
 			ret = process_cqe(ringp, cqe, in, out, &pending);
 			if (ret) {
 				cleanup(ringp, datap, buffers);
-				return 1;
+				return ret;
 			}
 			ret = io_uring_peek_cqe(ringp, &cqe);
 
@@ -200,9 +199,9 @@ static int copy_file(struct io_uring *ringp, size_t insize, int in, int out) {
 				break;
 
 			if (ret < 0) {
-				fprintf(stderr, "io_uring_peek_cqe: %s\n", strerror(-ret));
+				// fprintf(stderr, "io_uring_peek_cqe: %s\n", strerror(-ret));
 				cleanup(ringp, datap, buffers);
-				return 1;
+				return ret;
 			}
 		}
 
@@ -210,9 +209,9 @@ static int copy_file(struct io_uring *ringp, size_t insize, int in, int out) {
 			ret = io_uring_submit(ringp);
 		} while (ret == -EINTR);
 		if (ret < 0) {
-			fprintf(stderr, "io_uring_submit: %s\n", strerror(-ret));
+			// fprintf(stderr, "io_uring_submit: %s\n", strerror(-ret));
 			cleanup(ringp, datap, buffers);
-			return 1;
+			return ret;
 		}
 	}
 	cleanup(ringp, datap, buffers);
@@ -227,10 +226,10 @@ int copy(int in, int out)
     int ret;
 
 	if (setup_context(QD, &ring))
-        return 1;
+        return -1;
 
     if (get_file_size(in, &insize))
-        return 1;
+        return -1;
 
     ret = copy_file(&ring, insize, in, out);
 
