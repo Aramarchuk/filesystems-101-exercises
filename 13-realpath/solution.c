@@ -171,7 +171,6 @@ static void resolve_path(context *ctx)
             is_dir = 0;
         else {
             errno = ENOTDIR;
-            close(fd);
             goto error;
         }
         strcpy(ctx->resolved[ctx->resolved_len++], cursor);
