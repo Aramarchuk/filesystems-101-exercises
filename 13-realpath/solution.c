@@ -184,7 +184,7 @@ static void resolve_path(context *ctx)
     
 error:
     err = errno;
-    if (fd > 0)
+    if (fd >= 0)
         close(fd);
     construct_path(ctx, res, is_dir);
     report_error(res, cursor, err);
