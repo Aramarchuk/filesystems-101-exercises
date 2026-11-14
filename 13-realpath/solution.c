@@ -148,8 +148,8 @@ static void resolve_path(context *ctx)
                 close(ctx->fd);
                 ctx->fd = root_fd;
             }
-            write_components(ctx, symlink, nread);
             close(fd);
+            write_components(ctx, symlink, nread);
             continue;
         }
         if (strcmp(cursor, ".") == 0)
@@ -163,6 +163,7 @@ static void resolve_path(context *ctx)
                 ctx->resolved_len--;
             close(ctx->fd);
             ctx->fd = fd;
+            fd = -1;
             continue;
         }
         if (S_ISDIR(st.st_mode))
@@ -176,6 +177,7 @@ static void resolve_path(context *ctx)
         strcpy(ctx->resolved[ctx->resolved_len++], cursor);
         close(ctx->fd);
         ctx->fd = fd;
+        fd = -1;
     }
     construct_path(ctx, res, is_dir);
     report_path(res);
@@ -189,6 +191,7 @@ error:
     report_error(res, cursor, err);
 cleanup:
     fs_xfree(symlink);
+    close(ctx->fd);
     return;
 }
 
@@ -206,7 +209,6 @@ void abspath(const char *path)
     ctx->fd = fd;
     init_pending(ctx, path);
     resolve_path(ctx);
-    close(ctx->fd);
 cleanup:
     free(ctx);
 }
