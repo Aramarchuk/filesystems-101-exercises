@@ -147,17 +147,17 @@ static void resolve_path(context *ctx)
                 if ((root_fd = open("/", O_RDONLY | O_DIRECTORY | O_NOFOLLOW)) < 0)
                     goto error;
                 close(ctx->fd);
-                fprintf(stderr, "CLOSING ctx->fd in ISLINK = %d\n", ctx->fd);
+                fprintf(stdout, "CLOSING ctx->fd in ISLINK = %d\n", ctx->fd);
                 ctx->fd = root_fd;
             }
             close(fd);
-            fprintf(stderr, "CLOSING fd in ISLINK = %d\n", fd);
+            fprintf(stdout, "CLOSING fd in ISLINK = %d\n", fd);
             write_components(ctx, symlink, nread);
             continue;
         }
         if (strcmp(cursor, ".") == 0)
         {
-            fprintf(stderr, "CLOSING fd in '.' = %d\n", fd);
+            fprintf(stdout, "CLOSING fd in '.' = %d\n", fd);
             close(fd);
             continue;
         }
@@ -166,7 +166,7 @@ static void resolve_path(context *ctx)
             if (ctx->resolved_len > 0)
                 ctx->resolved_len--;
             close(ctx->fd);
-            fprintf(stderr, "CLOSING ctx->fd in '..' = %d\n", ctx->fd);
+            fprintf(stdout, "CLOSING ctx->fd in '..' = %d\n", ctx->fd);
             ctx->fd = fd;
             fd = -1;
             continue;
@@ -181,7 +181,7 @@ static void resolve_path(context *ctx)
         }
         strcpy(ctx->resolved[ctx->resolved_len++], cursor);
         close(ctx->fd);
-        fprintf(stderr, "CLOSING ctx->fd in REG|DIR = %d\n", ctx->fd);
+        fprintf(stdout, "CLOSING ctx->fd in REG|DIR = %d\n", ctx->fd);
         ctx->fd = fd;
         fd = -1;
     }
@@ -194,14 +194,14 @@ error:
     if (fd >= 0)
     {
         close(fd);
-        fprintf(stderr, "CLOSING fd in ERROR= %d\n", fd);
+        fprintf(stdout, "CLOSING fd in ERROR= %d\n", fd);
     }
     construct_path(ctx, res, is_dir);
     report_error(res, cursor, err);
 cleanup:
     fs_xfree(symlink);
     close(ctx->fd);
-    fprintf(stderr, "CLOSING ctx->fd = %d\n", ctx->fd);
+    fprintf(stdout, "CLOSING ctx->fd = %d\n", ctx->fd);
     return;
 }
 
@@ -219,7 +219,7 @@ void abspath(const char *path)
     ctx->fd = fd;
     init_pending(ctx, path);
     resolve_path(ctx);
-    fprintf(stderr, "RETURNED FROM resolve_path\n");
+    fprintf(stdout, "RETURNED FROM resolve_path\n");
 cleanup:
     free(ctx);
 }
