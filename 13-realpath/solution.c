@@ -56,25 +56,10 @@ static void write_components(context *ctx, const char *comps, ssize_t comps_len)
 }
 
 
-static void next_component(char *dest, const char **path)
-{
-    while (**path == '/')
-        (*path)++;
-
-    while (**path != '/' && **path != '\0') {
-       *dest = **path;
-        (*path)++;
-        dest++;
-    }
-    *dest = '\0';
-}
-
-
 static void init_pending(context *ctx, const char *path) {
-    while (*path != '\0') {
-        next_component(ctx->pending[ctx->pending_len++], &path);
-    }
+    write_components(ctx, path, strlen(path));
 }
+
 
 static ssize_t read_symlink(int fd,
                             char **buf, size_t *capacity)
@@ -147,17 +132,14 @@ static void resolve_path(context *ctx)
                 if ((root_fd = open("/", O_RDONLY | O_DIRECTORY | O_NOFOLLOW)) < 0)
                     goto error;
                 close(ctx->fd);
-                fprintf(stdout, "CLOSING ctx->fd in ISLINK = %d\n", ctx->fd);
                 ctx->fd = root_fd;
             }
             close(fd);
-            fprintf(stdout, "CLOSING fd in ISLINK = %d\n", fd);
             write_components(ctx, symlink, nread);
             continue;
         }
         if (strcmp(cursor, ".") == 0)
         {
-            fprintf(stdout, "CLOSING fd in '.' = %d\n", fd);
             close(fd);
             continue;
         }
@@ -166,7 +148,6 @@ static void resolve_path(context *ctx)
             if (ctx->resolved_len > 0)
                 ctx->resolved_len--;
             close(ctx->fd);
-            fprintf(stdout, "CLOSING ctx->fd in '..' = %d\n", ctx->fd);
             ctx->fd = fd;
             fd = -1;
             continue;
@@ -181,7 +162,6 @@ static void resolve_path(context *ctx)
         }
         strcpy(ctx->resolved[ctx->resolved_len++], cursor);
         close(ctx->fd);
-        fprintf(stdout, "CLOSING ctx->fd in REG|DIR = %d\n", ctx->fd);
         ctx->fd = fd;
         fd = -1;
     }
@@ -194,14 +174,12 @@ error:
     if (fd >= 0)
     {
         close(fd);
-        fprintf(stdout, "CLOSING fd in ERROR= %d\n", fd);
     }
     construct_path(ctx, res, is_dir);
     report_error(res, cursor, err);
 cleanup:
     fs_xfree(symlink);
     close(ctx->fd);
-    fprintf(stdout, "CLOSING ctx->fd = %d\n", ctx->fd);
     return;
 }
 
@@ -219,7 +197,6 @@ void abspath(const char *path)
     ctx->fd = fd;
     init_pending(ctx, path);
     resolve_path(ctx);
-    fprintf(stdout, "RETURNED FROM resolve_path\n");
 cleanup:
     free(ctx);
 }
