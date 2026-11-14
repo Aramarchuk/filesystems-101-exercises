@@ -1,4 +1,3 @@
-#include <asm-generic/errno-base.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -76,7 +75,7 @@ static void init_pending(context *ctx, const char *path) {
     }
 }
 
-static ssize_t read_symlink(context *ctx, const char *path,
+static ssize_t read_symlink(int fd,
                             char **buf, size_t *capacity)
 {
     ssize_t nread;
@@ -88,7 +87,7 @@ static ssize_t read_symlink(context *ctx, const char *path,
         *capacity *= 2;
         *buf = fs_xrealloc(*buf, *capacity);
 
-        nread = readlinkat(ctx->fd, path, *buf, *capacity - 1);
+        nread = readlinkat(fd, "", *buf, *capacity - 1);
 
         if (nread < 0)
             return -1;
@@ -106,7 +105,6 @@ void construct_path(context *ctx, char *res, int is_dir) {
     for (int i = 0; i < ctx->resolved_len; i++) {
         *(cur++) = '/';
         cur = stpcpy(cur, ctx->resolved[i]);
-
     }
     if (is_dir) {
         *(cur++) = '/';
@@ -118,54 +116,65 @@ void construct_path(context *ctx, char *res, int is_dir) {
 
 static void resolve_path(context *ctx)
 {
-    int err, fd;
+    int err;
     char *symlink = NULL;
     char res[PATH_MAX];
-    char *cursor = "/";
+    char *cursor;
     int is_dir = 1;
+    int fd;
     size_t symlink_capacity = 0;
     ssize_t nread;
-    fd = open("/", O_RDONLY | O_DIRECTORY | O_NOFOLLOW);
-    if (fd < 0) 
-        goto error;
-    ctx->fd = fd;
+    struct stat st;
     while (ctx->pending_len)
     {
         cursor = ctx->pending[ctx->pending_len - 1];
         ctx->pending_len--;
-        fd = openat(ctx->fd, cursor, O_RDONLY | O_DIRECTORY | O_NOFOLLOW);
-        if (fd == -1) {
-            if (errno == ENOTDIR)
+        fd = openat(ctx->fd, cursor, O_PATH | O_NOFOLLOW);
+        if (fd < 0)
+            goto error;
+        if (fstat(fd, &st) < 0)
+            goto error;
+        if (S_ISLNK(st.st_mode)) {
+            if ((nread = read_symlink(fd, &symlink, &symlink_capacity)) < 0)
             {
-                // trying to process symlink
-                if ((nread = read_symlink(ctx, cursor, &symlink, &symlink_capacity)) < 0)
-                    goto error;
-                if (symlink[0] == '/') {
-                    ctx->resolved_len = 0;
-                    close(ctx->fd);
-                    if ((fd = openat(ctx->fd, cursor, O_RDONLY | O_DIRECTORY | O_NOFOLLOW)) < 0)
-                        goto error;
-                    ctx->fd = fd;
-                }
-                write_components(ctx, symlink, nread);
-                continue;
+                goto error;
             }
-            else
-            {
-                is_dir = 0;
-                if ((fd = openat(ctx->fd, cursor, O_RDONLY | O_NOFOLLOW)) < 0)
+            if (symlink[0] == '/') {
+                int root_fd;
+                ctx->resolved_len = 0;
+                is_dir = 1;
+                if ((root_fd = open("/", O_RDONLY | O_DIRECTORY | O_NOFOLLOW)) < 0)
                     goto error;
+                close(ctx->fd);
+                ctx->fd = root_fd;
             }
+            write_components(ctx, symlink, nread);
+            close(fd);
+            continue;
         }
         if (strcmp(cursor, ".") == 0)
-            continue;
-        if (strcmp(cursor, "..") == 0) 
         {
-            ctx->resolved_len--;
+            close(fd);
             continue;
         }
-        is_dir = 1;
-        memcpy(ctx->resolved[ctx->resolved_len++], cursor, COMP_LEN);
+        if (strcmp(cursor, "..") == 0) 
+        {
+            if (ctx->resolved_len > 0)
+                ctx->resolved_len--;
+            close(ctx->fd);
+            ctx->fd = fd;
+            continue;
+        }
+        if (S_ISDIR(st.st_mode))
+            is_dir = 1;
+        else if (S_ISREG(st.st_mode))
+            is_dir = 0;
+        else {
+            errno = ENOTDIR;
+            close(fd);
+            goto error;
+        }
+        strcpy(ctx->resolved[ctx->resolved_len++], cursor);
         close(ctx->fd);
         ctx->fd = fd;
     }
@@ -175,20 +184,30 @@ static void resolve_path(context *ctx)
     
 error:
     err = errno;
+    if (fd > 0)
+        close(fd);
     construct_path(ctx, res, is_dir);
     report_error(res, cursor, err);
 cleanup:
-    if (ctx->fd )close(ctx->fd);
     fs_xfree(symlink);
     return;
 }
 
 void abspath(const char *path)
 {
+    int fd, err;
     context *ctx = fs_xzalloc(sizeof(context));
+    fd = open("/", O_RDONLY | O_DIRECTORY | O_NOFOLLOW);
+    if (fd < 0)
+    {
+        err = errno;
+        report_error("", "/", err);
+        goto cleanup;
+    }
+    ctx->fd = fd;
     init_pending(ctx, path);
     resolve_path(ctx);
-
-    if (ctx->fd) close(ctx->fd);
+    close(ctx->fd);
+cleanup:
     free(ctx);
 }
