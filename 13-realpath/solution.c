@@ -121,6 +121,10 @@ static void resolve_path(context *ctx)
         if (fstat(fd, &st) < 0)
             goto error;
         if (S_ISLNK(st.st_mode)) {
+            if (++ctx->symlink_count > MAX_SYMLINKS) {
+                errno = ELOOP;
+                goto error;
+            }
             if ((nread = read_symlink(fd, &symlink, &symlink_capacity)) < 0)
                 goto error;
             if (symlink[0] == '/') {
@@ -193,6 +197,12 @@ void abspath(const char *path)
     init_pending(ctx, path);
     resolve_path(ctx);
 cleanup:
+
     close(ctx->fd);
     free(ctx);
+    for (int i = 3; i < 1024; i++) {
+    if (fcntl(i, F_GETFD) != -1 || errno != EBADF) {
+        fprintf(stderr, "FD %d is open\n", i);
+    }
+}
 }
