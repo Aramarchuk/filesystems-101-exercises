@@ -122,9 +122,7 @@ static void resolve_path(context *ctx)
             goto error;
         if (S_ISLNK(st.st_mode)) {
             if ((nread = read_symlink(fd, &symlink, &symlink_capacity)) < 0)
-            {
                 goto error;
-            }
             if (symlink[0] == '/') {
                 int root_fd;
                 ctx->resolved_len = 0;
@@ -149,7 +147,6 @@ static void resolve_path(context *ctx)
                 ctx->resolved_len--;
             close(ctx->fd);
             ctx->fd = fd;
-            fd = -1;
             continue;
         }
         if (S_ISDIR(st.st_mode))
@@ -163,12 +160,11 @@ static void resolve_path(context *ctx)
         strcpy(ctx->resolved[ctx->resolved_len++], cursor);
         close(ctx->fd);
         ctx->fd = fd;
-        fd = -1;
     }
     construct_path(ctx, res, is_dir);
     report_path(res);
     goto cleanup;
-    
+
 error:
     err = errno;
     if (fd >= 0)
@@ -179,7 +175,6 @@ error:
     report_error(res, cursor, err);
 cleanup:
     fs_xfree(symlink);
-    close(ctx->fd);
     return;
 }
 
@@ -198,5 +193,6 @@ void abspath(const char *path)
     init_pending(ctx, path);
     resolve_path(ctx);
 cleanup:
+    close(ctx->fd);
     free(ctx);
 }
