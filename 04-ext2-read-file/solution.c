@@ -8,12 +8,10 @@
 #include <solution.h>
 
 #define EXT2_SUPERBLOCK_OFFSET 1024
-#define EXT2_DIRECT_BLOCKS 12
-#define EXT2_SINGLE_INDIRECT_BLOCKS 256
-#define EXT2_DOUBLE_INDIRECT_BLOCKS 65536
 
-#define EXT2_SINGLE_INDRECT_IBLOCK 13
-#define EXT2_DOUBLE_INDRECT_IBLOCK 14
+#define EXT2_DIRECT_BLOCKS 12
+#define EXT2_SINGLE_INDRECT_IBLOCK 12
+#define EXT2_DOUBLE_INDRECT_IBLOCK 13
 
 int read_exact(int fd, void *buf, size_t size, off_t offset)
 {
@@ -65,7 +63,7 @@ int translate_block(int img, int out, uint32_t *buf, uint32_t block_size, uint32
 {
 	int err;
 	size_t to_write = *remaining < block_size ? *remaining : block_size;
-	if ((err = read_exact(img, buf, to_write, block_number * block_size)) < 0)
+	if ((err = read_exact(img, buf, to_write, (off_t)block_number * block_size)) < 0)
 		return err;
 	if ((err = write_exact(out, buf, to_write)))
 		return err;
@@ -90,6 +88,9 @@ int dump_file(int img, int inode_nr, int out)
 	uint32_t block_size = 1024U << sb.s_log_block_size;
 	uint32_t group_nr = (inode_nr - 1) / sb.s_inodes_per_group;
 	uint32_t inode_in_group = (inode_nr - 1) % sb.s_inodes_per_group;
+
+	uint32_t ext2_blocks_in_single_indirect = block_size / sizeof(__le32);
+	uint32_t ext2_blocks_in_double_indirect = ext2_blocks_in_single_indirect * ext2_blocks_in_single_indirect;
 
 	
 	uint32_t gdt_block = (block_size == 1024) ? 2 : 1;
@@ -118,12 +119,12 @@ int dump_file(int img, int inode_nr, int out)
 		direct_blocks = EXT2_DIRECT_BLOCKS;
 
 	uint32_t single_inderct_blocks = data_blocks - direct_blocks;
-	if (single_inderct_blocks > EXT2_SINGLE_INDIRECT_BLOCKS)
-		single_inderct_blocks = EXT2_SINGLE_INDIRECT_BLOCKS;
+	if (single_inderct_blocks > ext2_blocks_in_single_indirect)
+		single_inderct_blocks = ext2_blocks_in_single_indirect;
 
 	uint32_t double_inderct_blocks = data_blocks - direct_blocks - single_inderct_blocks;
-	if (double_inderct_blocks > EXT2_DOUBLE_INDIRECT_BLOCKS)
-		double_inderct_blocks = EXT2_DOUBLE_INDIRECT_BLOCKS;
+	if (double_inderct_blocks > ext2_blocks_in_double_indirect)
+		double_inderct_blocks = ext2_blocks_in_double_indirect;
 
 	// Direct blocks
 	for (uint32_t i = 0; i < direct_blocks; i++)
@@ -133,29 +134,47 @@ int dump_file(int img, int inode_nr, int out)
 	}
 
 	// Single Indirect blocks
-	if ((err = read_exact(img, indirect_block_buffer, block_size, inode.i_block[EXT2_SINGLE_INDRECT_IBLOCK])) < 0)
-		goto cleanup;
-
-	for (uint32_t i = 0; i < single_inderct_blocks; i++)
+	if (single_inderct_blocks > 0)
 	{
-
-		if ((err = translate_block(img, out, block_buffer, block_size, &remaining, indirect_block_buffer[i])) < 0)
+		off_t single_indirect_offset = (off_t)inode.i_block[EXT2_SINGLE_INDRECT_IBLOCK] * block_size;
+		if ((err = read_exact(img, indirect_block_buffer, block_size, single_indirect_offset)) < 0)
 			goto cleanup;
+
+		for (uint32_t i = 0; i < single_inderct_blocks; i++)
+		{
+
+			if ((err = translate_block(img, out, block_buffer, block_size, &remaining, indirect_block_buffer[i])) < 0)
+				goto cleanup;
+		}
 	}
 	// Double Indirect blocks
-	if ((err = read_exact(img, double_indirect_block_buffer, block_size, inode.i_block[EXT2_DOUBLE_INDRECT_IBLOCK])) < 0)
-		goto cleanup;
-
-	for (uint32_t i = 0; i < (double_inderct_blocks + EXT2_SINGLE_INDIRECT_BLOCKS - 1) / EXT2_SINGLE_INDIRECT_BLOCKS; i++)
+	if (double_inderct_blocks > 0)
 	{
-		off_t indirect_block_offset = double_indirect_block_buffer[i] * block_size;
-		if ((err = read_exact(img, indirect_block_buffer, block_size, indirect_block_offset)) < 0)
-			goto cleanup;
+		off_t double_indirect_offset = (off_t)inode.i_block[EXT2_DOUBLE_INDRECT_IBLOCK] * block_size;
 
-		for (uint32_t j = i * EXT2_SINGLE_INDIRECT_BLOCKS; j < double_inderct_blocks; j++)
+		if ((err = read_exact(img, double_indirect_block_buffer, block_size, double_indirect_offset)) < 0)
+			goto cleanup;
+		uint32_t remaining_blocks = double_inderct_blocks;
+
+		for (uint32_t i = 0; remaining_blocks > 0; i++)
 		{
-			if ((err = translate_block(img, out, block_buffer, block_size, &remaining, indirect_block_buffer[j % EXT2_SINGLE_INDIRECT_BLOCKS])) < 0)
+			off_t indirect_block_offset = (off_t)double_indirect_block_buffer[i] * block_size;
+
+			if ((err = read_exact(img, indirect_block_buffer, block_size, indirect_block_offset)) < 0)
 				goto cleanup;
+
+			uint32_t count = remaining_blocks < ext2_blocks_in_single_indirect
+				? remaining_blocks
+				: ext2_blocks_in_single_indirect;
+
+			for (uint32_t j = 0; j < count; j++)
+			{
+				if ((err = translate_block(img, out, block_buffer, block_size,
+										&remaining,
+										indirect_block_buffer[j])) < 0)
+					goto cleanup;
+			}
+			remaining_blocks -= count;
 		}
 	}
 
