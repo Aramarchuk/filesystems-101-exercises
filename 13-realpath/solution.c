@@ -85,7 +85,7 @@ static void init_pending(context *ctx, const char *path)
 }
 
 
-static ssize_t read_symlink(int fd,
+static ssize_t read_symlink(int fd, const char *path,
                             char **buf, size_t *capacity)
 {
     ssize_t nread;
@@ -97,7 +97,7 @@ static ssize_t read_symlink(int fd,
         *capacity *= 2;
         *buf = fs_xrealloc(*buf, *capacity);
 
-        nread = readlinkat(fd, "", *buf, *capacity - 1);
+        nread = readlinkat(fd, path, *buf, *capacity - 1);
 
         if (nread < 0)
             return -errno;
@@ -148,16 +148,15 @@ static void resolve_path(context *ctx)
     ssize_t nread;
     while (ctx->pending_len)
     {
-        is_dir = 1;
+        is_dir = -1;
         cursor = get_pending_component(ctx);
         fd = openat(ctx->fd, cursor, O_PATH | O_NOFOLLOW | O_DIRECTORY);
         if (fd < 0)
         {
             if (errno == ENOTDIR)
             {
-                if ((fd = openat(ctx->fd, cursor, O_PATH | O_NOFOLLOW)) < 0)
-                    goto error;
-                if ((nread = read_symlink(fd, &symlink, &symlink_capacity)) > 0)
+                err = errno;
+                if ((nread = read_symlink(fd, cursor, &symlink, &symlink_capacity)) > 0)
                 {
                     if (++ctx->symlink_count > MAX_SYMLINKS)
                     {
@@ -178,17 +177,9 @@ static void resolve_path(context *ctx)
                     write_components(ctx, symlink, nread);
                     continue;
                 }
-                else
-                {
-                    if (nread == -ENOENT)
-                    {
-                        is_dir = 0;
-                    }
-                    else
-                    {
-                        goto error;
-                    }
-                }
+                is_dir = 0;
+                if ((fd = openat(ctx->fd, cursor, O_PATH | O_NOFOLLOW)) < 0)
+                    goto error;
             }
             else
             {
@@ -222,11 +213,7 @@ error:
     {
         close(fd);
     }
-    struct stat statbuf;
-    fstat(fd, &statbuf);
-    is_dir = S_ISDIR(statbuf.st_mode);
     construct_path(ctx, res, is_dir);
-
     report_error(res, cursor, err);
 cleanup:
     fs_xfree(symlink);
