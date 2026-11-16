@@ -148,15 +148,30 @@ static void resolve_path(context *ctx)
     ssize_t nread;
     while (ctx->pending_len)
     {
-        is_dir = -1;
+        is_dir = 1;
         cursor = get_pending_component(ctx);
+
+        if (strcmp(cursor, ".") == 0)
+        {
+            continue;
+        }
+        if (strcmp(cursor, "..") == 0) 
+        {
+            if ((fd = openat(ctx->fd, cursor, O_PATH | O_DIRECTORY)) < 0)
+                goto error;
+            if (ctx->resolved_len > 0)
+                ctx->resolved_len--;
+            close(ctx->fd);
+            ctx->fd = fd;
+            continue;
+        }
         fd = openat(ctx->fd, cursor, O_PATH | O_NOFOLLOW | O_DIRECTORY);
         if (fd < 0)
         {
             if (errno == ENOTDIR)
             {
                 err = errno;
-                if ((nread = read_symlink(fd, cursor, &symlink, &symlink_capacity)) > 0)
+                if ((nread = read_symlink(ctx->fd, cursor, &symlink, &symlink_capacity)) > 0)
                 {
                     if (++ctx->symlink_count > MAX_SYMLINKS)
                     {
@@ -173,7 +188,6 @@ static void resolve_path(context *ctx)
                         close(ctx->fd);
                         ctx->fd = root_fd;
                     }
-                    close(fd);
                     write_components(ctx, symlink, nread);
                     continue;
                 }
@@ -182,22 +196,7 @@ static void resolve_path(context *ctx)
                     goto error;
             }
             else
-            {
                 goto error;
-            }
-        }
-        if (strcmp(cursor, ".") == 0)
-        {
-            close(fd);
-            continue;
-        }
-        if (strcmp(cursor, "..") == 0) 
-        {
-            if (ctx->resolved_len > 0)
-                ctx->resolved_len--;
-            close(ctx->fd);
-            ctx->fd = fd;
-            continue;
         }
         write_resolved_component(ctx, cursor);
         close(ctx->fd);
