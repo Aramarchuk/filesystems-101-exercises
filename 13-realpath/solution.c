@@ -13,12 +13,14 @@
 
 #define MAX_SYMLINKS 40
 #define COMP_LEN NAME_MAX + 1
+#define INITIAL_CONTEXT_LENGTH 64
 
 
 typedef struct {
-    char resolved[PATH_MAX][COMP_LEN];
-    char pending[PATH_MAX][COMP_LEN];
+    char *resolved;
+    char *pending;
     int resolved_len, pending_len;
+    ssize_t resolved_size, pending_size;
     size_t symlink_count;
     int fd;
 } context;
@@ -47,7 +49,13 @@ static void write_components(context *ctx, const char *comps, ssize_t comps_len)
         //     goto error;
         // }
 
-        char *dst = ctx->pending[ctx->pending_len++];
+        if (ctx->pending_len >= ctx->pending_size)
+        {
+            ctx->pending_size *= 2;
+            ctx->pending = fs_xrealloc(ctx->pending, ctx->pending_size * COMP_LEN);
+        }
+
+        char *dst = &ctx->pending[(ctx->pending_len++) * COMP_LEN];
         memcpy(dst, p, len);
         dst[len] = '\0';
     }
@@ -55,8 +63,24 @@ static void write_components(context *ctx, const char *comps, ssize_t comps_len)
     return;
 }
 
+static void write_resolved_component(context *ctx, const char *comp)
+{
+    const char *cur = comp;
+    size_t len = 0;
+    while ((*cur++) != '\0') {}
+    len = cur - comp;
+    if (ctx->resolved_len >= ctx->resolved_size)
+    {
+        ctx->resolved_size *= 2;
+        ctx->resolved = fs_xrealloc(ctx->resolved, ctx->resolved_size * COMP_LEN);
+    }
+    char *dst = ctx->resolved + (ctx->resolved_len++) * COMP_LEN;
+    memcpy(dst, comp, len);
+}
 
-static void init_pending(context *ctx, const char *path) {
+
+static void init_pending(context *ctx, const char *path)
+{
     write_components(ctx, path, strlen(path));
 }
 
@@ -86,17 +110,29 @@ static ssize_t read_symlink(int fd,
     return nread;
 }
 
-void construct_path(context *ctx, char *res, int is_dir) {
+void construct_path(context *ctx, char *res, int is_dir)
+{
     char *cur = res;
     for (int i = 0; i < ctx->resolved_len; i++) {
         *(cur++) = '/';
-        cur = stpcpy(cur, ctx->resolved[i]);
+        char *src = &ctx->resolved[i * COMP_LEN];
+        char *len_check = src;
+        while ((*len_check++) != '\0') {}
+        int len = len_check - src - 1;
+        memcpy(cur, src, len);
+        cur += len;
     }
     if (is_dir) {
         *(cur++) = '/';
         *cur = '\0';
     }
     return;
+}
+
+char* get_pending_component(context *ctx)
+{
+    char *dst = ctx->pending + (--ctx->pending_len) * COMP_LEN;
+    return dst;
 }
 
 
@@ -113,21 +149,22 @@ static void resolve_path(context *ctx)
     struct stat st;
     while (ctx->pending_len)
     {
-        cursor = ctx->pending[ctx->pending_len - 1];
-        ctx->pending_len--;
+        cursor = get_pending_component(ctx);
         fd = openat(ctx->fd, cursor, O_PATH | O_NOFOLLOW);
         if (fd < 0)
             goto error;
         if (fstat(fd, &st) < 0)
             goto error;
         if (S_ISLNK(st.st_mode)) {
-            if (++ctx->symlink_count > MAX_SYMLINKS) {
+            if (++ctx->symlink_count > MAX_SYMLINKS)
+            {
                 errno = ELOOP;
                 goto error;
             }
             if ((nread = read_symlink(fd, &symlink, &symlink_capacity)) < 0)
                 goto error;
-            if (symlink[0] == '/') {
+            if (symlink[0] == '/')
+            {
                 int root_fd;
                 ctx->resolved_len = 0;
                 is_dir = 1;
@@ -161,7 +198,7 @@ static void resolve_path(context *ctx)
             errno = ENOTDIR;
             goto error;
         }
-        strcpy(ctx->resolved[ctx->resolved_len++], cursor);
+        write_resolved_component(ctx, cursor);
         close(ctx->fd);
         ctx->fd = fd;
     }
@@ -182,6 +219,16 @@ cleanup:
     return;
 }
 
+void init_context(context *ctx, const char *path)
+{
+    ctx->resolved_size = INITIAL_CONTEXT_LENGTH;
+    ctx->pending_size = INITIAL_CONTEXT_LENGTH;
+    ctx->resolved = fs_xmalloc(ctx->resolved_size * COMP_LEN);
+    ctx->pending = fs_xmalloc(ctx->pending_size * COMP_LEN);
+    init_pending(ctx, path);
+
+}
+
 void abspath(const char *path)
 {
     int fd, err;
@@ -194,15 +241,11 @@ void abspath(const char *path)
         goto cleanup;
     }
     ctx->fd = fd;
-    init_pending(ctx, path);
+    init_context(ctx, path);
     resolve_path(ctx);
 cleanup:
-
     close(ctx->fd);
+    free(ctx->pending);
+    free(ctx->resolved);
     free(ctx);
-    for (int i = 3; i < 1024; i++) {
-    if (fcntl(i, F_GETFD) != -1 || errno != EBADF) {
-        fprintf(stderr, "FD %d is open\n", i);
-    }
-}
 }
