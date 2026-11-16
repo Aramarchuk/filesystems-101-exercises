@@ -142,13 +142,13 @@ static void resolve_path(context *ctx)
     char *symlink = NULL;
     char res[PATH_MAX];
     char *cursor;
-    int is_dir = 0;
+    int is_dir = 1;
     int fd;
     size_t symlink_capacity = 0;
     ssize_t nread;
     while (ctx->pending_len)
     {
-        is_dir = 0;
+        is_dir = 1;
         cursor = get_pending_component(ctx);
         fd = openat(ctx->fd, cursor, O_PATH | O_NOFOLLOW | O_DIRECTORY);
         if (fd < 0)
@@ -162,7 +162,6 @@ static void resolve_path(context *ctx)
                     if (++ctx->symlink_count > MAX_SYMLINKS)
                     {
                         errno = ELOOP;
-                        is_dir = 0;
                         goto error;
                     }
                     if (symlink[0] == '/')
@@ -181,8 +180,11 @@ static void resolve_path(context *ctx)
                 }
                 else
                 {
-                    is_dir = 0;
-                    if (nread != -ENOENT)
+                    if (nread == -ENOENT)
+                    {
+                        is_dir = 0;
+                    }
+                    else
                     {
                         goto error;
                     }
