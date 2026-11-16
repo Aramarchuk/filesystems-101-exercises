@@ -222,7 +222,11 @@ error:
     {
         close(fd);
     }
+    struct stat statbuf;
+    fstat(fd, &statbuf);
+    is_dir = S_ISDIR(statbuf.st_mode);
     construct_path(ctx, res, is_dir);
+
     report_error(res, cursor, err);
 cleanup:
     fs_xfree(symlink);
