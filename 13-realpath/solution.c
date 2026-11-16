@@ -124,8 +124,8 @@ void construct_path(context *ctx, char *res, int is_dir)
     }
     if (is_dir) {
         *(cur++) = '/';
-        *cur = '\0';
     }
+    *cur = '\0';
     return;
 }
 
