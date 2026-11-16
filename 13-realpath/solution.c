@@ -100,7 +100,7 @@ static ssize_t read_symlink(int fd,
         nread = readlinkat(fd, "", *buf, *capacity - 1);
 
         if (nread < 0)
-            return -1;
+            return -errno;
 
         if ((size_t)nread < *capacity - 1)
             break;
@@ -146,36 +146,54 @@ static void resolve_path(context *ctx)
     int fd;
     size_t symlink_capacity = 0;
     ssize_t nread;
-    struct stat st;
     while (ctx->pending_len)
     {
+        is_dir = 1;
         cursor = get_pending_component(ctx);
-        fd = openat(ctx->fd, cursor, O_PATH | O_NOFOLLOW);
+        fd = openat(ctx->fd, cursor, O_PATH | O_NOFOLLOW | O_DIRECTORY);
         if (fd < 0)
-            goto error;
-        if (fstat(fd, &st) < 0)
-            goto error;
-        if (S_ISLNK(st.st_mode)) {
-            if (++ctx->symlink_count > MAX_SYMLINKS)
+        {
+            if (errno == ENOTDIR)
             {
-                errno = ELOOP;
-                goto error;
-            }
-            if ((nread = read_symlink(fd, &symlink, &symlink_capacity)) < 0)
-                goto error;
-            if (symlink[0] == '/')
-            {
-                int root_fd;
-                ctx->resolved_len = 0;
-                is_dir = 1;
-                if ((root_fd = open("/", O_RDONLY | O_DIRECTORY | O_NOFOLLOW)) < 0)
+                if ((fd = openat(ctx->fd, cursor, O_PATH | O_NOFOLLOW)) < 0)
                     goto error;
-                close(ctx->fd);
-                ctx->fd = root_fd;
+                if ((nread = read_symlink(fd, &symlink, &symlink_capacity)) > 0)
+                {
+                    if (++ctx->symlink_count > MAX_SYMLINKS)
+                    {
+                        errno = ELOOP;
+                        goto error;
+                    }
+                    if (symlink[0] == '/')
+                    {
+                        int root_fd;
+                        ctx->resolved_len = 0;
+                        is_dir = 1;
+                        if ((root_fd = open("/", O_RDONLY | O_DIRECTORY | O_NOFOLLOW)) < 0)
+                            goto error;
+                        close(ctx->fd);
+                        ctx->fd = root_fd;
+                    }
+                    close(fd);
+                    write_components(ctx, symlink, nread);
+                    continue;
+                }
+                else
+                {
+                    if (nread == -ENOENT)
+                    {
+                        is_dir = 0;
+                    }
+                    else
+                    {
+                        goto error;
+                    }
+                }
             }
-            close(fd);
-            write_components(ctx, symlink, nread);
-            continue;
+            else
+            {
+                goto error;
+            }
         }
         if (strcmp(cursor, ".") == 0)
         {
@@ -189,14 +207,6 @@ static void resolve_path(context *ctx)
             close(ctx->fd);
             ctx->fd = fd;
             continue;
-        }
-        if (S_ISDIR(st.st_mode))
-            is_dir = 1;
-        else if (S_ISREG(st.st_mode))
-            is_dir = 0;
-        else {
-            errno = ENOTDIR;
-            goto error;
         }
         write_resolved_component(ctx, cursor);
         close(ctx->fd);
