@@ -2,9 +2,7 @@
 
 #include <errno.h>
 
-
-
-static int read_exact(int fd, void *buf, size_t size, off_t offset)
+int read_exact(int fd, void *buf, size_t size, off_t offset)
 {
     size_t done = 0;
 
@@ -27,7 +25,7 @@ static int read_exact(int fd, void *buf, size_t size, off_t offset)
     return 0;
 }
 
-static int write_exact(int fd, void *buf, size_t size)
+int write_exact(int fd, void *buf, size_t size)
 {
     size_t done = 0;
 
