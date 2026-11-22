@@ -1,4 +1,4 @@
-#include <solution.h>
+#include <ext2_blkiter.h>
 
 #include <stdio.h>
 #include <unistd.h>
@@ -28,12 +28,12 @@ int main(int argc, char **argv)
 		errx(1, "ext2_blkiter_init() failed");
 
 	for (;;) {
-		int blkno;
+		uint32_t blkno;
 		r = ext2_blkiter_next(i, &blkno);
 		if (r < 0)
 			errx(1, "ext2_blkiter_next() failed");
 		else if (r > 0)
-			printf("%i\n", blkno);
+			printf("%u\n", blkno);
 		else
 			break;
 	}

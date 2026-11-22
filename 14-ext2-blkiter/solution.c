@@ -1,4 +1,4 @@
-#include <solution.h>
+#include <ext2_blkiter.h>
 
 #include <endian.h>
 #include <errno.h>
@@ -25,6 +25,7 @@ struct ext2_blkiter
 	struct ext2_fs *fs;
 	uint32_t i_block[EXT2_N_BLOCKS];
 	uint64_t blocks_num;
+	uint64_t file_size;
 	uint64_t read;
 
 	uint64_t direct_blocks;
@@ -81,6 +82,17 @@ void ext2_fs_free(struct ext2_fs *fs)
 	fs_xfree(fs);
 }
 
+uint32_t ext2_fs_block_size(const struct ext2_fs *fs)
+{
+	return fs->block_size;
+}
+
+int ext2_fs_read_block(struct ext2_fs *fs, uint32_t block, void *buf)
+{
+	off_t offset = (off_t)block * fs->block_size;
+	return read_exact(fs->fd, buf, fs->block_size, offset);
+}
+
 int ext2_blkiter_init(struct ext2_blkiter **i, struct ext2_fs *fs, int ino)
 {
 	if (i == NULL)
@@ -128,6 +140,7 @@ int ext2_blkiter_init(struct ext2_blkiter **i, struct ext2_fs *fs, int ino)
 	iter->blocks_num =
 		((uint64_t)le32toh(inode.i_size) + fs->block_size - 1) /
 		fs->block_size;
+	iter->file_size = le32toh(inode.i_size);
 	iter->direct_blocks = iter->blocks_num < EXT2_DIRECT_BLOCKS ?
 				      iter->blocks_num : EXT2_DIRECT_BLOCKS;
 
@@ -152,7 +165,7 @@ fail:
 	return err;
 }
 
-int ext2_blkiter_next(struct ext2_blkiter *i, int *blkno)
+int ext2_blkiter_next(struct ext2_blkiter *i, uint32_t *blkno)
 {
 	if (i == NULL || blkno == NULL)
 		return -EINVAL;
@@ -172,7 +185,7 @@ int ext2_blkiter_next(struct ext2_blkiter *i, int *blkno)
 			off_t offset = (off_t)i->i_block[EXT2_SINGLE_INDRECT_IBLOCK] *
 				       i->fs->block_size;
 			err = read_exact(i->fs->fd, i->indirect_block_buffer,
-					 i->fs->block_size, offset);
+					i->fs->block_size, offset);
 			if (err < 0)
 				return err;
 		}
@@ -188,7 +201,7 @@ int ext2_blkiter_next(struct ext2_blkiter *i, int *blkno)
 			off_t offset = (off_t)i->i_block[EXT2_DOUBLE_INDRECT_IBLOCK] *
 				       i->fs->block_size;
 			err = read_exact(i->fs->fd, i->double_indirect_block_buffer,
-					 i->fs->block_size, offset);
+					i->fs->block_size, offset);
 			if (err < 0)
 				return err;
 		}
@@ -197,7 +210,7 @@ int ext2_blkiter_next(struct ext2_blkiter *i, int *blkno)
 				(off_t)le32toh(i->double_indirect_block_buffer[root_index]) *
 				i->fs->block_size;
 			err = read_exact(i->fs->fd, i->indirect_block_buffer,
-					 i->fs->block_size, offset);
+					i->fs->block_size, offset);
 			if (err < 0)
 				return err;
 		}
@@ -216,7 +229,7 @@ int ext2_blkiter_next(struct ext2_blkiter *i, int *blkno)
 			off_t offset = (off_t)i->i_block[EXT2_TRIPLE_INDRECT_IBLOCK] *
 				       i->fs->block_size;
 			err = read_exact(i->fs->fd, i->triple_indirect_block_buffer,
-					 i->fs->block_size, offset);
+					i->fs->block_size, offset);
 			if (err < 0)
 				return err;
 		}
@@ -225,7 +238,7 @@ int ext2_blkiter_next(struct ext2_blkiter *i, int *blkno)
 				(off_t)le32toh(i->triple_indirect_block_buffer[root_index]) *
 				i->fs->block_size;
 			err = read_exact(i->fs->fd, i->double_indirect_block_buffer,
-					 i->fs->block_size, offset);
+					i->fs->block_size, offset);
 			if (err < 0)
 				return err;
 		}
@@ -234,16 +247,21 @@ int ext2_blkiter_next(struct ext2_blkiter *i, int *blkno)
 				(off_t)le32toh(i->double_indirect_block_buffer[middle_index]) *
 				i->fs->block_size;
 			err = read_exact(i->fs->fd, i->indirect_block_buffer,
-					 i->fs->block_size, offset);
+					i->fs->block_size, offset);
 			if (err < 0)
 				return err;
 		}
 		block = le32toh(i->indirect_block_buffer[leaf_index]);
 	}
 
-	*blkno = (int)block;
+	*blkno = block;
 	i->read++;
 	return 1;
+}
+
+uint64_t ext2_blkiter_file_size(const struct ext2_blkiter *i)
+{
+	return i->file_size;
 }
 
 void ext2_blkiter_free(struct ext2_blkiter *i)
