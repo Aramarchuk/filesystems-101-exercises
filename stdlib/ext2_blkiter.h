@@ -25,7 +25,7 @@ void ext2_fs_free(struct ext2_fs *fs);
 
 uint32_t ext2_fs_block_size(const struct ext2_fs *fs);
 
-int ext2_fs_read_block(struct ext2_fs *fs, uint32_t block, void *buf);
+int ext2_fs_read_block(struct ext2_fs *fs, int block, void *buf);
 
 /**
    Allocate and initialise an iterator over blocks of an inode @ino.
@@ -54,7 +54,7 @@ int ext2_blkiter_init(struct ext2_blkiter **iter, struct ext2_fs *fs,
    * 0 if successful and the iteration is over,
    * a (negative) errno code if an error occurred.
  */
-int ext2_blkiter_next(struct ext2_blkiter *iter, uint32_t *blkno);
+int ext2_blkiter_next(struct ext2_blkiter *iter, int *blkno);
 
 uint64_t ext2_blkiter_file_size(const struct ext2_blkiter *iter);
 

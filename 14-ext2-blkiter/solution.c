@@ -16,7 +16,7 @@ int dump_blocks(int img, int ino)
 		goto cleanup;
 
 	for (;;) {
-		uint32_t block;
+		int block;
 		int next = ext2_blkiter_next(iter, &block);
 		if (next < 0) {
 			err = next;
@@ -26,7 +26,7 @@ int dump_blocks(int img, int ino)
 			err = 0;
 			break;
 		}
-		printf("%u\n", block);
+		printf("%i\n", block);
 	}
 
 cleanup:
