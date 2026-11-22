@@ -1,5 +1,5 @@
 #include <errno.h>
-#include <fs_ext2.h>
+#include <endian.h>
 #include <linux/limits.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -7,25 +7,16 @@
 #include <unistd.h>
 
 #include <solution.h>
-#include <blkiter.h>
-#include <utils.h>
+#include <ext2_blkiter.h>
 #include <fs_malloc.h>
 
 
 struct dir_entry_fields {
-    __le32 inode;
-    __le16 rec_len;
+    uint32_t inode;
+    uint16_t rec_len;
     uint8_t name_len;
     uint8_t file_type;
 };
-
-#define DIR_ENTRY_FIELDS_SIZE 8
-
-
-static off_t get_offset(struct ext2_fs *fs, int block_nr)
-{
-	return (off_t)fs->block_size * block_nr;
-}
 
 static int process_dir_block(const char *buffer, size_t block_size)
 {
@@ -67,11 +58,11 @@ int dump_dir(int img, int inode_nr)
     int blkno;
     int err;
 
-    int fs_img = dup(img);
-    if (fs_img < 0)
+    int fs_fd = dup(img);
+    if (fs_fd < 0)
         return -errno;
 
-    err = ext2_fs_init(&fs, fs_img);
+    err = ext2_fs_init(&fs, fs_fd);
     if (err < 0)
         return err;
 
@@ -79,7 +70,8 @@ int dump_dir(int img, int inode_nr)
     if (err < 0)
         goto cleanup;
 
-    buf = fs_xmalloc(fs->block_size);
+    uint32_t block_size = ext2_fs_block_size(fs);
+    buf = fs_xmalloc(block_size);
 
     for (;;) {
         int next = ext2_blkiter_next(iter, &blkno);
@@ -92,11 +84,11 @@ int dump_dir(int img, int inode_nr)
             break;
         }
 
-        err = read_exact(fs->fd, buf, fs->block_size, get_offset(fs, blkno));
+        err = ext2_fs_read_block(fs, blkno, buf);
         if (err < 0)
             goto cleanup;
 
-        err = process_dir_block(buf, fs->block_size);
+        err = process_dir_block(buf, block_size);
         if (err < 0)
             goto cleanup;
     }

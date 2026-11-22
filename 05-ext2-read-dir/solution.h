@@ -1,5 +1,16 @@
 #pragma once
 
+#include <linux/types.h>
+#include <sys/types.h>
+
+struct ext2_direntry
+{
+   __le32 inode;
+   __le16 total_size;
+   u_int8_t name_size;
+   char *name;
+};
+
 /**
    Implement this function to parse the content of an inode @inode_nr
    as an ext2 directory. The function must call report_file() for each
