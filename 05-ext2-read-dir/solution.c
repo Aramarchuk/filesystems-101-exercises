@@ -1,53 +1,59 @@
 #include <errno.h>
 #include <fs_ext2.h>
+#include <linux/limits.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <string.h>
 #include <unistd.h>
 
 #include <solution.h>
+#include <blkiter.h>
+#include <utils.h>
+#include <fs_malloc.h>
 
 
-static int read_exact(int fd, void *buf, size_t size, off_t offset)
+struct dir_entry_fields {
+    __le32 inode;
+    __le16 rec_len;
+    uint8_t name_len;
+    uint8_t file_type;
+};
+
+#define DIR_ENTRY_FIELDS_SIZE 8
+
+
+static off_t get_offset(struct ext2_fs *fs, int block_nr)
 {
-    size_t done = 0;
-
-    while (done < size) {
-        ssize_t n = pread(fd, (char *)buf + done,
-                          size - done, offset + done);
-
-        if (n < 0) {
-            if (errno == EINTR)
-                continue;
-            return -errno;
-        }
-
-        if (n == 0)
-            return -EIO;
-
-        done += n;
-    }
-
-    return 0;
+	return (off_t)fs->block_size * block_nr;
 }
 
-static int write_exact(int fd, void *buf, size_t size)
+static int process_dir_block(const char *buffer, size_t block_size)
 {
-    size_t done = 0;
+    size_t offset = 0;
+    struct dir_entry_fields de;
+    uint32_t inode, rec_len;
+    char name[NAME_MAX + 1];
 
-    while (done < size) {
-        ssize_t n = write(fd, (char *)buf + done,
-                          size - done);
+    while (offset < block_size) {
+        memcpy(&de, buffer + offset, sizeof(de));
 
-        if (n < 0) {
-            if (errno == EINTR)
-                continue;
-            return -errno;
+        inode = le32toh(de.inode);
+        rec_len = le16toh(de.rec_len);
+        if (rec_len < sizeof(de) ||
+            rec_len % 4 != 0 ||
+            rec_len > block_size - offset ||
+            de.name_len > rec_len - sizeof(de))
+            return -EPROTO;
+
+        if (inode != 0) {
+            memcpy(name, buffer + offset + sizeof(de), de.name_len);
+            name[de.name_len] = '\0';
+
+            char type = de.file_type == 2 ? 'd' : 'f';
+            report_file(inode, type, name);
         }
 
-        if (n == 0)
-            return -EIO;
-
-        done += n;
+        offset += rec_len;
     }
 
     return 0;
@@ -55,11 +61,49 @@ static int write_exact(int fd, void *buf, size_t size)
 
 int dump_dir(int img, int inode_nr)
 {
-	(void) img;
-	(void) inode_nr;
+    struct ext2_fs *fs = NULL;
+    struct ext2_blkiter *iter = NULL;
+    char *buf = NULL;
+    int blkno;
+    int err;
 
+    int fs_img = dup(img);
+    if (fs_img < 0)
+        return -errno;
 
+    err = ext2_fs_init(&fs, fs_img);
+    if (err < 0)
+        return err;
 
-	/* implement me */
-	return 0;
+    err = ext2_blkiter_init(&iter, fs, inode_nr);
+    if (err < 0)
+        goto cleanup;
+
+    buf = fs_xmalloc(fs->block_size);
+
+    for (;;) {
+        int next = ext2_blkiter_next(iter, &blkno);
+        if (next < 0) {
+            err = next;
+            goto cleanup;
+        }
+        if (next == 0) {
+            err = 0;
+            break;
+        }
+
+        err = read_exact(fs->fd, buf, fs->block_size, get_offset(fs, blkno));
+        if (err < 0)
+            goto cleanup;
+
+        err = process_dir_block(buf, fs->block_size);
+        if (err < 0)
+            goto cleanup;
+    }
+
+cleanup:
+    fs_xfree(buf);
+    ext2_blkiter_free(iter);
+    ext2_fs_free(fs);
+    return err;
 }

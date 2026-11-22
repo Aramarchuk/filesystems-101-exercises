@@ -1,8 +1,9 @@
 #pragma once
 
-
 #include <stdint.h>
 #include <fs_ext2.h>
+
+
 struct ext2_fs
 {
 	struct ext2_super_block sb;
@@ -33,3 +34,11 @@ struct ext2_blkiter
 
 
 int ext2_fs_init(struct ext2_fs **fs, int fd);
+
+void ext2_fs_free(struct ext2_fs *fs);
+
+int ext2_blkiter_init(struct ext2_blkiter **i, struct ext2_fs *fs, int ino);
+
+int ext2_blkiter_next(struct ext2_blkiter *i, int *blkno);
+
+void ext2_blkiter_free(struct ext2_blkiter *i);
