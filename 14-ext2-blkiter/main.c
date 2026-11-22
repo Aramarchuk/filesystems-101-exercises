@@ -1,4 +1,4 @@
-#include <ext2_blkiter.h>
+#include <solution.h>
 
 #include <stdio.h>
 #include <unistd.h>
@@ -18,27 +18,8 @@ int main(int argc, char **argv)
 		errx(1, "open(img) failed");
 	int ino = atoi(argv[2]);
 
-	struct ext2_fs *fs = NULL;
-	struct ext2_blkiter *i = NULL;
-	int r;
-
-	if ((r = ext2_fs_init(&fs, img)))
-		errx(1, "ext2_fs_init() failed");
-	if ((r = ext2_blkiter_init(&i, fs, ino)))
-		errx(1, "ext2_blkiter_init() failed");
-
-	for (;;) {
-		uint32_t blkno;
-		r = ext2_blkiter_next(i, &blkno);
-		if (r < 0)
-			errx(1, "ext2_blkiter_next() failed");
-		else if (r > 0)
-			printf("%u\n", blkno);
-		else
-			break;
-	}
-
-	ext2_blkiter_free(i);
-	ext2_fs_free(fs);
+	int r = dump_blocks(img, ino);
+	if (r < 0)
+		errx(1, "dump_blocks() failed");
 	return 0;
 }
