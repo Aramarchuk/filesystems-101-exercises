@@ -23,7 +23,5 @@ int main(int argc, char **argv)
 		errx(1, "dump_file() failed");
 
 	close(out);
-	close(img);
-
 	return 0;
 }
