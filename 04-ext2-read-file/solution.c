@@ -1,4 +1,6 @@
 #include <stdint.h>
+#include <errno.h>
+#include <unistd.h>
 
 #include <ext2_blkiter.h>
 #include <fs_malloc.h>
@@ -10,7 +12,11 @@ int dump_file(int img, int inode_nr, int out)
 	struct ext2_fs *fs = NULL;
 	struct ext2_blkiter *iter = NULL;
 	void *buffer = NULL;
-	int err = ext2_fs_init(&fs, img);
+	int fs_fd = dup(img);
+	if (fs_fd < 0)
+		return -errno;
+
+	int err = ext2_fs_init(&fs, fs_fd);
 	if (err < 0)
 		return err;
 
