@@ -23,7 +23,7 @@ int dump_file(int img, int inode_nr, int out)
 	buffer = fs_xmalloc(block_size);
 
 	while (1) {
-		uint32_t block;
+		int block;
 		int next = ext2_blkiter_next(iter, &block);
 		if (next < 0) {
 			err = next;
