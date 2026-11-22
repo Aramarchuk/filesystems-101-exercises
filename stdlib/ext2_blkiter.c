@@ -87,7 +87,7 @@ uint32_t ext2_fs_block_size(const struct ext2_fs *fs)
 	return fs->block_size;
 }
 
-int ext2_fs_read_block(struct ext2_fs *fs, uint32_t block, void *buf)
+int ext2_fs_read_block(struct ext2_fs *fs, int block, void *buf)
 {
 	off_t offset = (off_t)block * fs->block_size;
 	return read_exact(fs->fd, buf, fs->block_size, offset);
@@ -165,7 +165,7 @@ fail:
 	return err;
 }
 
-int ext2_blkiter_next(struct ext2_blkiter *i, uint32_t *blkno)
+int ext2_blkiter_next(struct ext2_blkiter *i, int *blkno)
 {
 	if (i == NULL || blkno == NULL)
 		return -EINVAL;
@@ -254,7 +254,7 @@ int ext2_blkiter_next(struct ext2_blkiter *i, uint32_t *blkno)
 		block = le32toh(i->indirect_block_buffer[leaf_index]);
 	}
 
-	*blkno = block;
+	*blkno = (int)block;
 	i->read++;
 	return 1;
 }
